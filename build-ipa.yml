@@ -1,0 +1,50 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # Igual à versão "pasteo": o jogo inteiro vai dentro do app e roda só no celular, sem PC.
+      # Ficam de fora só os arquivos do modo PC (phone, pad, servidores, .bat) e os do próprio projeto iOS.
+      - name: Copiar o jogo para dentro do app
+        run: |
+          rm -rf ios/www && mkdir -p ios/www
+          rsync -a \
+            --exclude '/ios' --exclude '/.github' --exclude '/.git' \
+            --exclude '/phone' --exclude '/pad' --exclude '/Nueva carpeta' \
+            --exclude '/server.js' --exclude '/js/server.js' --exclude '/js/navegador-server.js' \
+            --exclude '/iniciar.bat' --exclude '/iniciar.command' --exclude '/liberar-firewall.bat' \
+            --exclude '/LEIAME.txt' --exclude '/COMO-USAR.txt' --exclude '/.htaccess' --exclude '/SKZ-VR.ipa' \
+            ./ ios/www/
+          test -f ios/www/index.html && test -f ios/www/assets/modelo_chel.glb && echo "jogo e modelo copiados"
+
+      - name: Instalar XcodeGen
+        run: brew install xcodegen
+
+      - name: Gerar o projeto Xcode
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Compilar (sem assinatura)
+        working-directory: ios
+        run: |
+          xcodebuild -project VRProto.xcodeproj -scheme VRProto -configuration Release -sdk iphoneos \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" clean build
+
+      - name: Empacotar o IPA
+        run: |
+          mkdir -p out/Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/VRProto.app out/Payload/
+          cd out && zip -qry ../SKZ-VR.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SKZ-VR-ipa
+          path: SKZ-VR.ipa
