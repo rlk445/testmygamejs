@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>SKZ VR · Controle</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+html,body{margin:0;height:100%;background:#0b1020;color:#fff;font:16px -apple-system,system-ui,Roboto,sans-serif;overflow:hidden;touch-action:none;overscroll-behavior:none}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;gap:10px;padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))}
+#top{display:flex;gap:8px;align-items:center;justify-content:space-between}
+#st{font:13px ui-monospace,Menlo,monospace;line-height:1.5;color:#9fe3b8;flex:1}
+#st.bad{color:#ffb4a8}
+button{font:inherit;color:#fff;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.14);border-radius:16px;padding:0 16px;height:48px}
+button:active{transform:scale(.97)}
+#help{display:none;background:rgba(255,180,100,.14);border:1px solid rgba(255,180,100,.5);border-radius:14px;padding:12px;font-size:14px;line-height:1.45;color:#ffe2b8;overflow:auto;max-height:42%;-webkit-user-select:text;user-select:text;touch-action:pan-y}
+#help b{color:#fff}
+#help code{background:rgba(0,0,0,.35);padding:1px 5px;border-radius:6px;font-size:13px}
+#trig{flex:1;border-radius:28px;background:linear-gradient(#2f6df0,#1c3f9c);border:2px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;letter-spacing:1px;touch-action:none}
+#trig.down{background:linear-gradient(#59a0ff,#2f6df0);transform:scale(.985)}
+#tip{font-size:12px;color:#aab6d6;text-align:center;line-height:1.4}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top"><div id="st">iniciando…</div><button id="cal">Calibrar</button></div>
+  <div id="help"></div>
+  <div id="trig">GATILHO</div>
+  <div id="tip">Segure o celular como um controle remoto, com o topo apontando para a tela do jogo. Aponte para a frente e toque em <b>Calibrar</b>. Segure o GATILHO para clicar, pegar e arrastar.</div>
+</div>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+let ws = null, wsOk = false, down = 0, oriN = 0, lastSend = 0, last = null, calNext = false, needPerm = false;
+const st = (t, bad) => { $('st').textContent = t; $('st').className = bad ? 'bad' : ''; };
+
+function showHelp() {
+  const h = $('help'); h.style.display = 'block';
+  h.innerHTML = '<b>O Chrome bloqueia os sensores nesta página</b> porque o endereço não é HTTPS. Libere uma vez:<br>1) No Chrome do celular abra <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code><br>2) Ative e digite no campo: <code>http://' + location.host + '</code><br>3) Toque em <b>Relançar</b> e abra esta página de novo.';
+}
+function sensorCheck() {
+  setTimeout(() => { if (oriN === 0) { if (!window.isSecureContext) showHelp(); else st('Sem dados do sensor. Toque em Calibrar ou na tela.', true); } }, 1800);
+}
+async function askPerm() {                                                   // iPhone/iPad pedem permissão; Android não
+  try { if (window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission) { const r = await DeviceOrientationEvent.requestPermission(); if (r !== 'granted') st('Permissão de movimento negada.', true); } } catch (e) {}
+}
+let wl = null; async function keepAwake() { try { if (navigator.wakeLock) wl = await navigator.wakeLock.request('screen'); } catch (e) {} }
+
+function connect() {
+  try { ws = new WebSocket('ws://' + location.host + '/ws?role=pad'); } catch (e) { st('Endereço inválido.', true); return; }
+  const mine = ws; wsOk = false;
+  ws.onopen = () => { wsOk = true; calNext = true; render(); };
+  ws.onclose = () => { wsOk = false; render(); setTimeout(() => { if (mine === ws) connect(); }, 1500); };
+  ws.onerror = () => {};
+}
+function render() { st((wsOk ? '● PC conectado' : '○ procurando o PC…') + '\nsensor: ' + (oriN ? 'ok' : '—') + (down ? '  gatilho: ON' : ''), !wsOk); }
+const send = o => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
+addEventListener('deviceorientation', e => {
+  if (![e.alpha, e.beta].every(Number.isFinite)) return; oriN++;
+  last = { a: +e.alpha.toFixed(2), b: +e.beta.toFixed(2) };
+  const now = performance.now(); if (now - lastSend < 8) return; lastSend = now;
+  const m = { t: 'pad', a: last.a, b: last.b, d: down }; if (calNext) { m.c = 1; calNext = false; }
+  send(m);
+});
+setInterval(() => { render(); if (last) send({ t: 'pad', a: last.a, b: last.b, d: down }); }, 400);   // mantém vivo mesmo parado
+
+const trig = $('trig');
+const setDown = v => { down = v ? 1 : 0; trig.classList.toggle('down', !!v); if (v && navigator.vibrate) navigator.vibrate(12); if (last) send({ t: 'pad', a: last.a, b: last.b, d: down }); render(); };
+trig.addEventListener('pointerdown', e => { e.preventDefault(); try { trig.setPointerCapture(e.pointerId); } catch (er) {} askPerm(); keepAwake(); setDown(true); });
+['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => trig.addEventListener(ev, () => setDown(false)));
+$('cal').addEventListener('click', () => { askPerm(); keepAwake(); calNext = true; if (last) { send({ t: 'pad', a: last.a, b: last.b, d: down, c: 1 }); calNext = false; } if (navigator.vibrate) navigator.vibrate(30); });
+document.addEventListener('contextmenu', e => e.preventDefault());
+if (!window.isSecureContext) showHelp();
+connect(); sensorCheck(); render();
+})();
+</script>
+</body>
+</html>
